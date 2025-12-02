@@ -1,0 +1,25 @@
+name: Deploy User Service
+on:
+  push:
+    branches:
+      - main
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SERVICES_SSH_KEY }}
+      - name: Build and deploy
+        env:
+          SERVICES_HOST: ${{ secrets.SERVICES_HOST }}
+          SERVICES_USER: ${{ secrets.SERVICES_USER }}
+        run: |
+          ssh -o StrictHostKeyChecking=no $SERVICES_USER@$SERVICES_HOST "mkdir -p /opt/metachat-services/user-service"
+          rsync -az --delete -e "ssh -o StrictHostKeyChecking=no" ./ $SERVICES_USER@$SERVICES_HOST:/opt/metachat-services/user-service
+          ssh -o StrictHostKeyChecking=no $SERVICES_USER@$SERVICES_HOST "cd /opt/metachat-services/user-service && docker build -t metachat/user-service:latest . && docker service update --image metachat/user-service:latest metachat-services_user-service || docker service create --name metachat-services_user-service --network metachat_overlay metachat/user-service:latest"
+
+
