@@ -2,19 +2,24 @@ package grpc
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/reflection"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/metachat/common/event-sourcing/aggregates"
-	"github.com/metachat/common/event-sourcing/events"
-	pb "github.com/metachat/proto/generated/user"
 	"metachat/user-service/internal/models"
 	"metachat/user-service/internal/service"
+
+	pb "github.com/kegazani/metachat-proto/user"
+
+	"github.com/kegazani/metachat-event-sourcing/aggregates"
+	"github.com/kegazani/metachat-event-sourcing/events"
 )
 
 // UserServer implements the gRPC UserService interface
@@ -30,21 +35,6 @@ func NewUserServer(userService service.UserService, logger *logrus.Logger) *User
 		userService: userService,
 		logger:      logger,
 	}
-}
-
-// CreateUser creates a new user
-func (s *UserServer) CreateUser(ctx context.Context, req *pb.CreateUserRequest) (*pb.CreateUserResponse, error) {
-	s.logger.WithField("username", req.Username).Info("Creating user via gRPC")
-
-	user, err := s.userService.CreateUser(ctx, req.Username, req.Email, req.FirstName, req.LastName, req.DateOfBirth)
-	if err != nil {
-		s.logger.WithError(err).Error("Failed to create user")
-		return nil, fmt.Errorf("failed to create user: %w", err)
-	}
-
-	return &pb.CreateUserResponse{
-		User: s.userToProto(user),
-	}, nil
 }
 
 // GetUser retrieves a user by ID
@@ -114,11 +104,9 @@ func (s *UserServer) UpdateModalities(ctx context.Context, req *pb.UpdateModalit
 	modalities := make([]events.UserModality, len(req.Modalities))
 	for i, modality := range req.Modalities {
 		modalities[i] = events.UserModality{
-			ID:      modality.Id,
-			Name:    modality.Name,
-			Type:    modality.Type,
-			Enabled: modality.Enabled,
-			Weight:  modality.Weight,
+			ID:     modality.Id,
+			Name:   modality.Name,
+			Weight: modality.Score,
 		}
 	}
 
@@ -189,32 +177,124 @@ func (s *UserServer) ListUsers(ctx context.Context, req *pb.ListUsersRequest) (*
 	}, nil
 }
 
+func (s *UserServer) GetUserProfileProgress(ctx context.Context, req *pb.GetUserProfileProgressRequest) (*pb.GetUserProfileProgressResponse, error) {
+	s.logger.WithField("user_id", req.Id).Info("Getting user profile progress via gRPC")
+
+	progress, err := s.userService.GetUserProfileProgress(ctx, req.Id)
+	if err != nil {
+		s.logger.WithError(err).Error("Failed to get user profile progress")
+		return nil, fmt.Errorf("failed to get user profile progress: %w", err)
+	}
+
+	return &pb.GetUserProfileProgressResponse{
+		Progress: &pb.ProfileProgress{
+			TokensAnalyzed:          progress.TokensAnalyzed,
+			TokensRequiredForFirst:  progress.TokensRequiredForFirst,
+			TokensRequiredForRecalc: progress.TokensRequiredForRecalc,
+			DaysSinceLastCalc:       progress.DaysSinceLastCalc,
+			DaysUntilRecalc:         progress.DaysUntilRecalc,
+			IsFirstCalculation:      progress.IsFirstCalculation,
+			ProgressPercentage:      progress.ProgressPercentage,
+		},
+	}, nil
+}
+
+func (s *UserServer) GetUserStatistics(ctx context.Context, req *pb.GetUserStatisticsRequest) (*pb.GetUserStatisticsResponse, error) {
+	s.logger.WithField("user_id", req.Id).Info("Getting user statistics via gRPC")
+
+	statistics, err := s.userService.GetUserStatistics(ctx, req.Id)
+	if err != nil {
+		s.logger.WithError(err).Error("Failed to get user statistics")
+		return nil, fmt.Errorf("failed to get user statistics: %w", err)
+	}
+
+	return &pb.GetUserStatisticsResponse{
+		Statistics: &pb.UserStatistics{
+			TotalDiaryEntries:     statistics.TotalDiaryEntries,
+			TotalMoodAnalyses:     statistics.TotalMoodAnalyses,
+			TotalTokens:           statistics.TotalTokens,
+			DominantEmotion:       statistics.DominantEmotion,
+			TopTopics:             statistics.TopTopics,
+			ProfileCreatedAt:      timestamppb.New(statistics.ProfileCreatedAt),
+			LastPersonalityUpdate: timestamppb.New(statistics.LastPersonalityUpdate),
+		},
+	}, nil
+}
+
+// Login authenticates a user and returns a JWT token
+func (s *UserServer) Login(ctx context.Context, req *pb.LoginRequest) (*pb.LoginResponse, error) {
+	s.logger.WithField("email", req.Email).Info("Login request via gRPC")
+
+	token, err := s.userService.Login(ctx, req.Email, req.Password)
+	if err != nil {
+		s.logger.WithError(err).Error("Failed to login")
+		return nil, fmt.Errorf("failed to login: %w", err)
+	}
+
+	readModel, err := s.userService.GetUserReadModelByEmail(ctx, req.Email)
+	if err != nil {
+		s.logger.WithError(err).Error("Failed to get user read model after login")
+		return nil, fmt.Errorf("failed to get user: %w", err)
+	}
+
+	return &pb.LoginResponse{
+		Token: token,
+		Id:    readModel.ID,
+	}, nil
+}
+
+// Register creates a new user with password and returns a JWT token
+func (s *UserServer) Register(ctx context.Context, req *pb.RegisterRequest) (*pb.RegisterResponse, error) {
+	s.logger.WithFields(logrus.Fields{
+		"email":    req.Email,
+		"username": req.Username,
+	}).Info("Register request via gRPC")
+
+	if req.Username == "" {
+		s.logger.Error("Username is required")
+		return nil, fmt.Errorf("username is required")
+	}
+	if req.Email == "" {
+		s.logger.Error("Email is required")
+		return nil, fmt.Errorf("email is required")
+	}
+	if req.Password == "" {
+		s.logger.Error("Password is required")
+		return nil, fmt.Errorf("password is required")
+	}
+
+	token, err := s.userService.Register(ctx, req.Username, req.Email, req.Password, req.FirstName, req.LastName)
+	if err != nil {
+		s.logger.WithFields(logrus.Fields{
+			"error":    err.Error(),
+			"email":    req.Email,
+			"username": req.Username,
+		}).Error("Failed to register user")
+
+		if errors.Is(err, service.ErrUsernameAlreadyExists) {
+			return nil, status.Error(codes.AlreadyExists, "username already exists")
+		}
+		if errors.Is(err, service.ErrEmailAlreadyExists) {
+			return nil, status.Error(codes.AlreadyExists, "email already exists")
+		}
+
+		return nil, status.Error(codes.Internal, fmt.Sprintf("failed to register user: %v", err))
+	}
+
+	user, err := s.userService.GetUserByEmail(ctx, req.Email)
+	if err != nil {
+		s.logger.WithError(err).WithField("email", req.Email).Error("Failed to get user after registration")
+		return nil, fmt.Errorf("failed to get user after registration: %w", err)
+	}
+
+	return &pb.RegisterResponse{
+		Token: token,
+		Id:    user.GetID(),
+	}, nil
+}
+
 // userToProto converts a user aggregate to a protobuf user message
 func (s *UserServer) userToProto(user *aggregates.UserAggregate) *pb.User {
-	archetype := user.GetArchetype()
-	var protoArchetype *pb.Archetype
-	if archetype != nil {
-		protoArchetype = &pb.Archetype{
-			Id:          archetype.ID,
-			Name:        archetype.Name,
-			Description: archetype.Description,
-			Confidence:  archetype.Score,
-		}
-	}
-
-	modalities := user.GetModalities()
-	protoModalities := make([]*pb.UserModality, len(modalities))
-	for i, modality := range modalities {
-		protoModalities[i] = &pb.UserModality{
-			Id:      modality.ID,
-			Name:    modality.Name,
-			Type:    modality.Type,
-			Enabled: modality.Enabled,
-			Weight:  modality.Weight,
-		}
-	}
-
-	// Get user data from the aggregate
 	return &pb.User{
 		Id:          user.GetID(),
 		Username:    user.GetUsername(),
@@ -224,8 +304,6 @@ func (s *UserServer) userToProto(user *aggregates.UserAggregate) *pb.User {
 		DateOfBirth: user.GetDateOfBirth(),
 		Avatar:      user.GetAvatar(),
 		Bio:         user.GetBio(),
-		Archetype:   protoArchetype,
-		Modalities:  protoModalities,
 		CreatedAt:   timestamppb.New(user.GetCreatedAt()),
 		UpdatedAt:   timestamppb.New(user.GetUpdatedAt()),
 	}

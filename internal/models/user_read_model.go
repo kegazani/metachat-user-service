@@ -3,7 +3,7 @@ package models
 import (
 	"time"
 
-	"github.com/metachat/common/event-sourcing/events"
+	"github.com/kegazani/metachat-event-sourcing/events"
 )
 
 // UserReadModel represents the read model for users in Cassandra
@@ -21,6 +21,7 @@ type UserReadModel struct {
 	ArchetypeScore       float64            `cql:"archetype_score"`
 	ArchetypeDescription string             `cql:"archetype_description"`
 	Modalities           []UserModalityRead `cql:"modalities"`
+	PasswordHash         string             `cql:"password_hash"`
 	CreatedAt            time.Time          `cql:"created_at"`
 	UpdatedAt            time.Time          `cql:"updated_at"`
 	Version              int                `cql:"version"`

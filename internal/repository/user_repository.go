@@ -2,11 +2,12 @@ package repository
 
 import (
 	"context"
+	"fmt"
 
-	"github.com/metachat/common/event-sourcing/aggregates"
-	"github.com/metachat/common/event-sourcing/events"
-	"github.com/metachat/common/event-sourcing/serializer"
-	"github.com/metachat/common/event-sourcing/store"
+	"github.com/kegazani/metachat-event-sourcing/aggregates"
+	"github.com/kegazani/metachat-event-sourcing/events"
+	"github.com/kegazani/metachat-event-sourcing/serializer"
+	"github.com/kegazani/metachat-event-sourcing/store"
 )
 
 // UserRepository defines the interface for user repository operations
@@ -40,18 +41,21 @@ func NewUserRepository(eventStore store.EventStore, serializer serializer.Serial
 
 // SaveUser saves a user aggregate to the event store
 func (r *userRepository) SaveUser(ctx context.Context, user *aggregates.UserAggregate) error {
-	// Get uncommitted events
 	eventList := user.GetUncommittedEvents()
 	if len(eventList) == 0 {
 		return nil
 	}
 
-	// Save events to event store
 	if err := r.eventStore.SaveEvents(ctx, eventList); err != nil {
-		return err
+		if store.GetEventStoreErrorCode(err) == store.ErrCodeVersionConflict {
+			return fmt.Errorf("version conflict while saving user events: %w", err)
+		}
+		if store.GetEventStoreErrorCode(err) == store.ErrCodeConnectionFailed {
+			return fmt.Errorf("event store connection failed: %w", err)
+		}
+		return fmt.Errorf("failed to save events to event store: %w", err)
 	}
 
-	// Clear uncommitted events
 	user.ClearUncommittedEvents()
 	return nil
 }

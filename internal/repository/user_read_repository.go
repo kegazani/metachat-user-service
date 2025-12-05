@@ -4,8 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/metachat/common/event-sourcing/events"
 	"metachat/user-service/internal/models"
+
+	"github.com/kegazani/metachat-event-sourcing/events"
 
 	"github.com/gocql/gocql"
 )
@@ -33,6 +34,9 @@ type UserReadRepository interface {
 	// UpdateUser updates a user read model in Cassandra
 	UpdateUser(ctx context.Context, user *models.UserReadModel) error
 
+	// SaveUserWithIndexes saves a user read model along with its indexes
+	SaveUserWithIndexes(ctx context.Context, user *models.UserReadModel) error
+
 	// DeleteUser deletes a user read model from Cassandra
 	DeleteUser(ctx context.Context, userID string) error
 
@@ -58,40 +62,81 @@ func NewUserReadRepository(session *gocql.Session) UserReadRepository {
 func (r *userReadRepository) SaveUser(ctx context.Context, user *models.UserReadModel) error {
 	query := `INSERT INTO users_read_model (id, username, email, first_name, last_name, date_of_birth, 
 		avatar, bio, archetype_id, archetype_name, archetype_score, archetype_description, 
-		modalities, created_at, updated_at, version) 
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		modalities, password_hash, created_at, updated_at, version) 
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
-	return r.session.Query(query,
+	err := r.session.Query(query,
 		user.ID, user.Username, user.Email, user.FirstName, user.LastName, user.DateOfBirth,
 		user.Avatar, user.Bio, user.ArchetypeID, user.ArchetypeName, user.ArchetypeScore,
-		user.ArchetypeDescription, user.Modalities, user.CreatedAt, user.UpdatedAt, user.Version,
-	).Exec()
+		user.ArchetypeDescription, user.Modalities, user.PasswordHash, user.CreatedAt, user.UpdatedAt, user.Version,
+	).WithContext(ctx).Exec()
+	
+	if err != nil {
+		return fmt.Errorf("cassandra error saving user read model: %w", err)
+	}
+	
+	return nil
 }
 
 // SaveUserByUsername saves a user by username read model to Cassandra
 func (r *userReadRepository) SaveUserByUsername(ctx context.Context, userByUsername *models.UserByUsernameReadModel) error {
 	query := `INSERT INTO users_by_username_read_model (username, user_id, email) VALUES (?, ?, ?)`
-	return r.session.Query(query, userByUsername.Username, userByUsername.UserID, userByUsername.Email).Exec()
+	err := r.session.Query(query, userByUsername.Username, userByUsername.UserID, userByUsername.Email).WithContext(ctx).Exec()
+	if err != nil {
+		return fmt.Errorf("cassandra error saving user by username index: %w", err)
+	}
+	return nil
 }
 
 // SaveUserByEmail saves a user by email read model to Cassandra
 func (r *userReadRepository) SaveUserByEmail(ctx context.Context, userByEmail *models.UserByEmailReadModel) error {
 	query := `INSERT INTO users_by_email_read_model (email, user_id, username) VALUES (?, ?, ?)`
-	return r.session.Query(query, userByEmail.Email, userByEmail.UserID, userByEmail.Username).Exec()
+	err := r.session.Query(query, userByEmail.Email, userByEmail.UserID, userByEmail.Username).WithContext(ctx).Exec()
+	if err != nil {
+		return fmt.Errorf("cassandra error saving user by email index: %w", err)
+	}
+	return nil
+}
+
+// SaveUserWithIndexes saves a user read model along with its indexes
+func (r *userReadRepository) SaveUserWithIndexes(ctx context.Context, user *models.UserReadModel) error {
+	if err := r.SaveUser(ctx, user); err != nil {
+		return fmt.Errorf("failed to save user read model: %w", err)
+	}
+
+	userByUsername := &models.UserByUsernameReadModel{
+		Username: user.Username,
+		UserID:   user.ID,
+		Email:    user.Email,
+	}
+	if err := r.SaveUserByUsername(ctx, userByUsername); err != nil {
+		return fmt.Errorf("failed to save user by username index: %w", err)
+	}
+
+	userByEmail := &models.UserByEmailReadModel{
+		Email:    user.Email,
+		UserID:   user.ID,
+		Username: user.Username,
+	}
+	if err := r.SaveUserByEmail(ctx, userByEmail); err != nil {
+		return fmt.Errorf("failed to save user by email index: %w", err)
+	}
+
+	return nil
 }
 
 // GetUserByID retrieves a user read model by ID
 func (r *userReadRepository) GetUserByID(ctx context.Context, userID string) (*models.UserReadModel, error) {
 	query := `SELECT id, username, email, first_name, last_name, date_of_birth, 
 		avatar, bio, archetype_id, archetype_name, archetype_score, archetype_description, 
-		modalities, created_at, updated_at, version 
+		modalities, password_hash, created_at, updated_at, version 
 		FROM users_read_model WHERE id = ?`
 
 	var user models.UserReadModel
 	err := r.session.Query(query, userID).Consistency(gocql.One).Scan(
 		&user.ID, &user.Username, &user.Email, &user.FirstName, &user.LastName, &user.DateOfBirth,
 		&user.Avatar, &user.Bio, &user.ArchetypeID, &user.ArchetypeName, &user.ArchetypeScore,
-		&user.ArchetypeDescription, &user.Modalities, &user.CreatedAt, &user.UpdatedAt, &user.Version,
+		&user.ArchetypeDescription, &user.Modalities, &user.PasswordHash, &user.CreatedAt, &user.UpdatedAt, &user.Version,
 	)
 	if err != nil {
 		if err == gocql.ErrNotFound {
@@ -141,13 +186,13 @@ func (r *userReadRepository) GetUserByEmail(ctx context.Context, email string) (
 func (r *userReadRepository) UpdateUser(ctx context.Context, user *models.UserReadModel) error {
 	query := `UPDATE users_read_model SET username = ?, email = ?, first_name = ?, last_name = ?, 
 		date_of_birth = ?, avatar = ?, bio = ?, archetype_id = ?, archetype_name = ?, 
-		archetype_score = ?, archetype_description = ?, modalities = ?, updated_at = ?, version = ? 
+		archetype_score = ?, archetype_description = ?, modalities = ?, password_hash = ?, updated_at = ?, version = ? 
 		WHERE id = ?`
 
 	return r.session.Query(query,
 		user.Username, user.Email, user.FirstName, user.LastName, user.DateOfBirth,
 		user.Avatar, user.Bio, user.ArchetypeID, user.ArchetypeName, user.ArchetypeScore,
-		user.ArchetypeDescription, user.Modalities, user.UpdatedAt, user.Version, user.ID,
+		user.ArchetypeDescription, user.Modalities, user.PasswordHash, user.UpdatedAt, user.Version, user.ID,
 	).Exec()
 }
 
@@ -315,12 +360,16 @@ func (r *userReadRepository) InitializeTables() error {
 		archetype_score DOUBLE,
 		archetype_description TEXT,
 		modalities LIST<FROZEN<map<TEXT, TEXT>>>,
+		password_hash TEXT,
 		created_at TIMESTAMP,
 		updated_at TIMESTAMP,
 		version INT
 	)`).Exec(); err != nil {
 		return fmt.Errorf("failed to create users_read_model table: %w", err)
 	}
+
+	// Add password_hash column if it doesn't exist (for existing tables)
+	r.session.Query(`ALTER TABLE users_read_model ADD password_hash TEXT`).Exec()
 
 	// Create users_by_username_read_model table
 	if err := r.session.Query(`CREATE TABLE IF NOT EXISTS users_by_username_read_model (

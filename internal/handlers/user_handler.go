@@ -7,11 +7,12 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/sirupsen/logrus"
 
-	"github.com/metachat/common/event-sourcing/aggregates"
-	"github.com/metachat/common/event-sourcing/events"
-	"github.com/metachat/common/event-sourcing/serializer"
-	"github.com/metachat/common/event-sourcing/store"
 	"metachat/user-service/internal/service"
+
+	"github.com/kegazani/metachat-event-sourcing/aggregates"
+	"github.com/kegazani/metachat-event-sourcing/events"
+	"github.com/kegazani/metachat-event-sourcing/serializer"
+	"github.com/kegazani/metachat-event-sourcing/store"
 )
 
 // UserHandler handles HTTP requests for user operations
@@ -42,49 +43,11 @@ func NewUserHandler(
 // RegisterRoutes registers the routes for the user handler
 func (h *UserHandler) RegisterRoutes(router *mux.Router) {
 	// User routes
-	router.HandleFunc("/users", h.CreateUser).Methods("POST")
 	router.HandleFunc("/users/{id}", h.GetUser).Methods("GET")
 	router.HandleFunc("/users/{id}", h.UpdateUser).Methods("PUT")
 	router.HandleFunc("/users/{id}/archetype", h.AssignArchetype).Methods("POST")
 	router.HandleFunc("/users/{id}/archetype", h.UpdateArchetype).Methods("PUT")
 	router.HandleFunc("/users/{id}/modalities", h.UpdateModalities).Methods("PUT")
-}
-
-// CreateUser handles the creation of a new user
-func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
-	var req struct {
-		Username    string `json:"username"`
-		Email       string `json:"email"`
-		FirstName   string `json:"first_name"`
-		LastName    string `json:"last_name"`
-		DateOfBirth string `json:"date_of_birth,omitempty"`
-	}
-
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.logger.WithError(err).Error("Failed to decode request body")
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	user, err := h.userService.CreateUser(ctx, req.Username, req.Email, req.FirstName, req.LastName, req.DateOfBirth)
-	if err != nil {
-		h.logger.WithError(err).Error("Failed to create user")
-		switch err {
-		case service.ErrUsernameAlreadyExists:
-			http.Error(w, "Username already exists", http.StatusConflict)
-		case service.ErrEmailAlreadyExists:
-			http.Error(w, "Email already exists", http.StatusConflict)
-		default:
-			http.Error(w, "Failed to create user", http.StatusInternalServerError)
-		}
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(h.userToResponse(user))
 }
 
 // GetUser handles retrieving a user by ID

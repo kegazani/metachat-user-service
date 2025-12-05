@@ -1,32 +1,78 @@
 server:
-  port: "8080"
+  port: "50051"
+  host: "0.0.0.0"
 
 event_store:
-  type: "memory"  # Options: "memory", "eventstoredb"
-  # For eventstoredb:
-  # url: "http://eventstore:2113"
-  # username: "admin"
-  # password: "changeit"
+  type: "eventstoredb"  # Options: "memory", "eventstoredb"
+  url: "http://localhost:2113"
+  username: "admin"
+  password: "changeit"
+  stream_prefix: "metachat-user"
 
 cassandra:
   hosts:
     - "localhost"
   keyspace: "metachat"
   consistency: "QUORUM"
+  timeout: "10s"
+  reconnect_attempts: 10
+  reconnect_delay: "5s"
   # For production:
   # username: "cassandra"
   # password: "cassandra"
 
 kafka:
   brokers:
-    - "kafka:9092"
+    - "localhost:9092"
   topic_prefix: "metachat"
   consumer_group: "user-service"
+  producer_timeout: "15s"
+  
+  topics:
+    user_events: "metachat-user-events"
+    
+  all_kafka_topics:
+    user_service:
+      - "metachat-user-events"
+    diary_service:
+      - "diary-events"
+      - "session-events"
+      - "metachat.diary.entry.created"
+      - "metachat.diary.entry.updated"
+      - "metachat.diary.entry.deleted"
+    mood_analysis_service:
+      - "metachat.diary.entry.created"
+      - "metachat.diary.entry.updated"
+      - "metachat.mood.analyzed"
+      - "metachat.mood.analysis.failed"
+    analytics_service:
+      - "metachat.mood.analyzed"
+      - "metachat.diary.entry.created"
+      - "metachat.diary.entry.deleted"
+      - "metachat.archetype.updated"
+    archetype_service:
+      - "metachat.mood.analyzed"
+      - "metachat.diary.entry.created"
+      - "metachat.archetype.assigned"
+      - "metachat.archetype.updated"
+      - "metachat.archetype.calculation.triggered"
+    biometric_service:
+      - "metachat.biometric.data.received"
+    correlation_service:
+      - "metachat.mood.analyzed"
+      - "metachat.biometric.data.received"
+      - "metachat.correlation.discovered"
 
-jwt:
-  secret: "your-secret-key"
-  expiration: "24h"
+auth:
+  jwt_secret: "your-secret-key"
+  jwt_expiration: "24h"
+  google_client_id: ""
+  apple_client_id: ""
 
 logging:
   level: "info"
   format: "json"
+
+grpc:
+  reflection_enabled: true
+  shutdown_timeout: "10s"
