@@ -17,9 +17,12 @@ jobs:
         env:
           SERVICES_HOST: ${{ secrets.SERVICES_HOST }}
           SERVICES_USER: ${{ secrets.SERVICES_USER }}
+          INFRA_CASSANDRA: ${{ secrets.INFRA_CASSANDRA_HOST }}
+          INFRA_KAFKA: ${{ secrets.INFRA_KAFKA_HOST }}
+          INFRA_EVENTSTORE: ${{ secrets.INFRA_EVENTSTORE_URL }}
+          EVENTSTORE_USERNAME: ${{ secrets.INFRA_EVENTSTORE_USERNAME }}
+          EVENTSTORE_PASSWORD: ${{ secrets.INFRA_EVENTSTORE_PASSWORD }}
         run: |
           ssh -o StrictHostKeyChecking=no $SERVICES_USER@$SERVICES_HOST "mkdir -p /opt/metachat-services/user-service"
           rsync -az --delete -e "ssh -o StrictHostKeyChecking=no" ./ $SERVICES_USER@$SERVICES_HOST:/opt/metachat-services/user-service
-          ssh -o StrictHostKeyChecking=no $SERVICES_USER@$SERVICES_HOST "cd /opt/metachat-services/user-service && docker build -t metachat/user-service:latest . && docker service update --image metachat/user-service:latest metachat-services_user-service || docker service create --name metachat-services_user-service --network metachat_overlay metachat/user-service:latest"
-
-
+          ssh -o StrictHostKeyChecking=no $SERVICES_USER@$SERVICES_HOST "cd /opt/metachat-services/user-service && docker build -t metachat/user-service:latest . && docker service update --image metachat/user-service:latest --env-add CASSANDRA_HOSTS=$INFRA_CASSANDRA --env-add KAFKA_BOOTSTRAP_SERVERS=$INFRA_KAFKA --env-add EVENT_STORE_URL=$INFRA_EVENTSTORE --env-add EVENT_STORE_USERNAME=$EVENTSTORE_USERNAME --env-add EVENT_STORE_PASSWORD=$EVENTSTORE_PASSWORD --env-add CASSANDRA_KEYSPACE=metachat --env-add EVENT_STORE_TYPE=eventstoredb --env-add SERVER_PORT=8080 --env-add GRPC_PORT=50051 --publish-add 50051:50051 metachat-services_user-service || docker service create --name metachat-services_user-service --network metachat_overlay -e CASSANDRA_HOSTS=$INFRA_CASSANDRA -e CASSANDRA_KEYSPACE=metachat -e KAFKA_BOOTSTRAP_SERVERS=$INFRA_KAFKA -e EVENT_STORE_TYPE=eventstoredb -e EVENT_STORE_URL=$INFRA_EVENTSTORE -e EVENT_STORE_USERNAME=$EVENTSTORE_USERNAME -e EVENT_STORE_PASSWORD=$EVENTSTORE_PASSWORD -e SERVER_PORT=8080 -e GRPC_PORT=50051 -p 50051:50051 metachat/user-service:latest"

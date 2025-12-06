@@ -39,7 +39,11 @@ func NewUserServer(userService service.UserService, logger *logrus.Logger) *User
 
 // GetUser retrieves a user by ID
 func (s *UserServer) GetUser(ctx context.Context, req *pb.GetUserRequest) (*pb.GetUserResponse, error) {
-	s.logger.WithField("user_id", req.Id).Info("Getting user via gRPC")
+	correlationID := GetCorrelationID(ctx)
+	s.logger.WithFields(logrus.Fields{
+		"correlation_id": correlationID,
+		"user_id":        req.Id,
+	}).Info("Getting user via gRPC")
 
 	user, err := s.userService.GetUserByID(ctx, req.Id)
 	if err != nil {
@@ -345,7 +349,9 @@ func StartGRPCServer(userService service.UserService, logger *logrus.Logger, por
 		return fmt.Errorf("failed to listen on port %s: %w", port, err)
 	}
 
-	s := grpc.NewServer()
+	s := grpc.NewServer(
+		grpc.UnaryInterceptor(CorrelationIDInterceptor(logger)),
+	)
 	pb.RegisterUserServiceServer(s, NewUserServer(userService, logger))
 
 	// Enable reflection for development

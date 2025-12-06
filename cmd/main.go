@@ -251,7 +251,9 @@ func main() {
 		logger.Fatalf("Failed to listen on %s: %v", address, err)
 	}
 
-	s := grpc.NewServer()
+	s := grpc.NewServer(
+		grpc.UnaryInterceptor(grpcServer.CorrelationIDInterceptor(logger)),
+	)
 	pb.RegisterUserServiceServer(s, grpcSrv)
 
 	// Enable reflection from config
